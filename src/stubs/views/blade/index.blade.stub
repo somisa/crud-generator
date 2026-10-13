@@ -10,7 +10,7 @@
             <div class="p-4 sm:p-8 bg-white shadow sm:rounded-lg">
                 <div class="w-full">
                     <section>
-                        <header>
+                        <header class="mb-4">
                             <h2 class="text-lg font-medium text-gray-900">
                                 %%crudNameCap%%
                             </h2>
@@ -18,7 +18,6 @@
                                 <a href="{{ route('%%crudName%%.create') }}" class="px-2 py-1 rounded-md bg-sky-500 text-white hover:bg-sky-600" title="Add New %%modelName%%">Add New</a>
                             </div>
                         </header>
-                        </br>
 
                         @if (session()->has('flash_message'))
                         <div class="text-white px-6 py-4 border-0 rounded relative mb-4 bg-emerald-500">

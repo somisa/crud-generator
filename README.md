@@ -30,6 +30,9 @@ php artisan crud:generate Posts --fields='title#string; content#text'
 php artisan migrate
 ```
 
+The generated views use the `<x-app-layout>` component and Tailwind classes, as in a Laravel Breeze project. Without Breeze, copy the stubs with `php artisan vendor:publish --provider="Appzcoder\CrudGenerator\CrudGeneratorServiceProvider"`
+(they land in `resources/crud-generator/`), set `custom_template` to `true` in `config/crudgenerator.php`, and change the layout there.
+
 Describe the columns with `--fields`: `name#type`, separated by semicolons. Options such as a view path, a controller namespace
 or a route group are listed in the documentation.
 
