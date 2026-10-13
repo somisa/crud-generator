@@ -146,8 +146,22 @@ class CrudMigrationCommand extends GeneratorCommand
 
         $tabIndent = '    ';
 
-        $schemaFields = '';
+        // One entry per statement of the Schema::create closure; they are laid out at the end.
+        $statements = [];
+
+        // `id()` for the default key: a signed INT key cannot be referenced by an unsigned BIGINT foreign key column.
+        $primaryKey = $this->option('pk');
+        $statements[] = $primaryKey === 'id'
+            ? "\$table->id();"
+            : "\$table->increments('" . $primaryKey . "');";
+
+        if ($this->option('soft-deletes') == 'yes') {
+            $statements[] = "\$table->softDeletes();";
+        }
+
         foreach ($data as $item) {
+            $modifier = $item['modifier'];
+
             if (isset($this->typeLookup[$item['type']])) {
                 $type = $this->typeLookup[$item['type']];
 
@@ -156,17 +170,19 @@ class CrudMigrationCommand extends GeneratorCommand
                     $enumOptionsStr = implode(",", array_map(function ($string) {
                         return '"' . $string . '"';
                     }, $enumOptions));
-                    $schemaFields .= "\$table->" . $type . "('" . $item['name'] . "', [" . $enumOptionsStr . "])";
+                    $column = "\$table->" . $type . "('" . $item['name'] . "', [" . $enumOptionsStr . "])";
+                } elseif ($type === 'bigInteger' && $modifier === '->unsigned()') {
+                    // the framework's own shorthand for the same column
+                    $column = "\$table->unsignedBigInteger('" . $item['name'] . "')";
+                    $modifier = '';
                 } else {
-                    $schemaFields .= "\$table->" . $type . "('" . $item['name'] . "')";
+                    $column = "\$table->" . $type . "('" . $item['name'] . "')";
                 }
             } else {
-                $schemaFields .= "\$table->string('" . $item['name'] . "')";
+                $column = "\$table->string('" . $item['name'] . "')";
             }
 
-            // Append column modifier
-            $schemaFields .= $item['modifier'];
-            $schemaFields .= ";\n" . $tabIndent . $tabIndent . $tabIndent;
+            $statements[] = $column . $modifier . ';';
         }
 
         // add indexes and unique indexes as necessary
@@ -189,15 +205,17 @@ class CrudMigrationCommand extends GeneratorCommand
             }
 
             if (count($parts) > 1 && $parts[1] == 'unique') {
-                $schemaFields .= "\$table->unique(" . trim($fieldNames) . ")";
+                $statements[] = "\$table->unique(" . trim($fieldNames) . ");";
             } else {
-                $schemaFields .= "\$table->index(" . trim($fieldNames) . ")";
+                $statements[] = "\$table->index(" . trim($fieldNames) . ");";
             }
-
-            $schemaFields .= ";\n" . $tabIndent . $tabIndent . $tabIndent;
         }
 
+        // timestamps come after the fields and indexes, before the foreign keys
+        $statements[] = "\$table->timestamps();";
+
         // foreign keys
+        $continuation = str_repeat(' ', 18); // the lines of one chained call, under the `$table->foreign(` at 12
         foreach ($foreignKeys as $fk) {
             $line = trim($fk);
 
@@ -206,44 +224,54 @@ class CrudMigrationCommand extends GeneratorCommand
             // if we don't have three parts, then the foreign key isn't defined properly
             // --foreign-keys="foreign_entity_id#id#foreign_entity#onDelete#onUpdate"
             if (count($parts) == 3) {
-                $schemaFields .= "\$table->foreign('" . trim($parts[0]) . "')"
-                . "->references('" . trim($parts[1]) . "')->on('" . trim($parts[2]) . "')";
+                // no action given: refuse a delete that would orphan a row
+                $statements[] = $this->foreignCall($tableName, trim($parts[0]))
+                    . "\n" . $continuation . "->references('" . trim($parts[1]) . "')"
+                    . "\n" . $continuation . "->on('" . trim($parts[2]) . "')"
+                    . "\n" . $continuation . "->restrictOnDelete();";
             } elseif (count($parts) == 4) {
-                $schemaFields .= "\$table->foreign('" . trim($parts[0]) . "')"
-                . "->references('" . trim($parts[1]) . "')->on('" . trim($parts[2]) . "')"
-                . "->onDelete('" . trim($parts[3]) . "')" . "->onUpdate('" . trim($parts[3]) . "')";
+                $statements[] = $this->foreignCall($tableName, trim($parts[0]))
+                    . "->references('" . trim($parts[1]) . "')->on('" . trim($parts[2]) . "')"
+                    . "->onDelete('" . trim($parts[3]) . "')" . "->onUpdate('" . trim($parts[3]) . "');";
             } elseif (count($parts) == 5) {
-                $schemaFields .= "\$table->foreign('" . trim($parts[0]) . "')"
-                . "->references('" . trim($parts[1]) . "')->on('" . trim($parts[2]) . "')"
-                . "->onDelete('" . trim($parts[3]) . "')" . "->onUpdate('" . trim($parts[4]) . "')";
-            } else {
-                continue;
+                $statements[] = $this->foreignCall($tableName, trim($parts[0]))
+                    . "->references('" . trim($parts[1]) . "')->on('" . trim($parts[2]) . "')"
+                    . "->onDelete('" . trim($parts[3]) . "')" . "->onUpdate('" . trim($parts[4]) . "');";
             }
-
-            $schemaFields .= ";\n" . $tabIndent . $tabIndent . $tabIndent;
         }
 
-        $primaryKey = $this->option('pk');
-        $softDeletes = $this->option('soft-deletes');
-
-        $softDeletesSnippets = '';
-        if ($softDeletes == 'yes') {
-            $softDeletesSnippets = "\$table->softDeletes();\n" . $tabIndent . $tabIndent . $tabIndent;
-        }
-
-        $schemaUp =
-            "Schema::create('" . $tableName . "', function (Blueprint \$table) {
-            \$table->increments('" . $primaryKey . "');
-            \$table->timestamps();\n" . $tabIndent . $tabIndent . $tabIndent .
-            $softDeletesSnippets .
-            $schemaFields .
-        "});";
+        $schemaUp = "Schema::create('" . $tableName . "', function (Blueprint \$table) {\n"
+            . implode("\n", array_map(function ($statement) use ($tabIndent) {
+                return $tabIndent . $tabIndent . $tabIndent . $statement;
+            }, $statements))
+            . "\n" . $tabIndent . $tabIndent . "});";
 
         $schemaDown = "Schema::drop('" . $tableName . "');";
 
         return $this->replaceSchemaUp($stub, $schemaUp)
             ->replaceSchemaDown($stub, $schemaDown)
             ->replaceClass($stub, $className);
+    }
+
+    /**
+     * `$table->foreign('column')`, with an explicit constraint name when Laravel's default `{table}_{column}_foreign` is
+     * longer than MySQL's 64 character identifier limit (it would fail after the table was already created, error 1059).
+     * The name is the first 55 characters, `_` and 8 characters of the md5 of the full default name.
+     *
+     * @param  string  $table
+     * @param  string  $column
+     *
+     * @return string
+     */
+    protected function foreignCall($table, $column)
+    {
+        $default = $table . '_' . $column . '_foreign';
+
+        if (strlen($default) <= 64) {
+            return "\$table->foreign('" . $column . "')";
+        }
+
+        return "\$table->foreign('" . $column . "', '" . substr($default, 0, 55) . '_' . substr(md5($default), 0, 8) . "')";
     }
 
     /**
