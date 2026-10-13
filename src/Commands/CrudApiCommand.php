@@ -137,13 +137,30 @@ class CrudApiCommand extends Command
     }
 
     /**
+     * The controller as a class name Laravel 8 and later can resolve. A plain string such as 'PostController' is no longer
+     * prefixed with `App\Http\Controllers`, so the route would fail with "Class does not exist".
+     *
+     * @return string
+     */
+    protected function controllerClass()
+    {
+        $root = $this->laravel->getNamespace();
+        $class = ltrim($this->controller, '\\');
+
+        // the controller generator keeps a name that already starts with the root namespace, and prefixes any other one
+        return strpos($class, $root) === 0
+            ? '\\' . $class . '::class'
+            : '\\' . $root . 'Http\\Controllers\\' . $class . '::class';
+    }
+
+    /**
      * Add routes.
      *
      * @return  array
      */
     protected function addRoutes()
     {
-        return ["Route::resource('" . $this->routeName . "', '" . $this->controller . "', ['except' => ['create', 'edit']]);"];
+        return ["Route::resource('" . $this->routeName . "', " . $this->controllerClass() . ", ['except' => ['create', 'edit']]);"];
     }
 
     /**
